@@ -1,0 +1,292 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": []
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "6LOtSmivD4PY"
+      },
+      "outputs": [],
+      "source": [
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "import psutil\n",
+        "import matplotlib.pyplot as plt\n",
+        "import statsmodels.api as sm\n",
+        "from linearmodels.panel import PanelOLS\n",
+        "from pathlib import Path\n",
+        "import math\n",
+        "import os, sys\n",
+        "\n",
+        "notebook_dir = Path().cwd()\n",
+        "project_root = notebook_dir.parent\n",
+        "sys.path.insert(0, str(project_root))\n",
+        "import importlib\n",
+        "import user_function as uf"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "path0 = '/mnt/sda1/RA5/data'\n",
+        "path1 = '/mnt/sda1/RA5/intermediate/siyoung'"
+      ],
+      "metadata": {
+        "id": "pam2gx95D9XM"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "This code conduct panel event study analysis"
+      ],
+      "metadata": {
+        "id": "N3fW56lvED9J"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "directory = os.path.join(path0, 'shc_birth_KCB_all.parquet')\n",
+        "df_kcb = pd.read_parquet(directory)\n",
+        "df_kcb = uf.clean_data(df_kcb)"
+      ],
+      "metadata": {
+        "id": "q3jCyXAbD_43"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_kcb.shape\n",
+        "# Result: (16128856, 135)"
+      ],
+      "metadata": {
+        "id": "UsHSWBrjD_7R"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_hshd_birth_months = df_kcb[df_kcb['shc_ch_birth'] == 1][['HSHD_SEQNO','BS_YR_MON']].drop_duplicates()\n",
+        "df_hshd_birth_months.rename(columns={'BS_YR_MON':'BS_YR_MON_birth'},inplace=True)\n",
+        "df_hshd_birth_months.sort_values(['HSHD_SEQNO','BS_YR_MON_birth'], inplace=True)\n",
+        "\n",
+        "df_hshd_birth_months['diff_months'] = df_hshd_birth_months.groupby(['HSHD_SEQNO'])['BS_YR_MON_birth'].transform(lambda x: (x.dt.year - x.shift().dt.year)*12 + (x.dt.month - x.shift().dt.month))\n",
+        "df_hshd_birth_months = df_hshd_birth_months[(df_hshd_birth_months['diff_months'].isna())| (df_hshd_birth_months['diff_months'] > 10)]\n",
+        "\n",
+        "df_hshd_birth_months.drop(columns={'diff_months'}, inplace = True)\n",
+        "\n",
+        "df_hshd_birth_months['birth_order'] = df_hshd_birth_months.groupby('HSHD_SEQNO')\\\n",
+        "    .cumcount() + 1\n",
+        "\n",
+        "df_hshd_birth_months = df_hshd_birth_months[df_hshd_birth_months['birth_order'] == 1]\n",
+        "df_kcb = df_kcb.merge(df_hshd_birth_months, on='HSHD_SEQNO', how='left')"
+      ],
+      "metadata": {
+        "id": "IbU4X1L6D_9h"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_kcb['is_m_20_40'] = (df_kcb['SEX'] == 'Male') & (df_kcb['AGE'].between(20,40))\n",
+        "df_kcb['is_f_20_40'] = (df_kcb['SEX'] == 'Female') & (df_kcb['AGE'].between(20,40))\n",
+        "\n",
+        "df_kcb['hshd_is_two_parents'] = ((df_kcb.groupby(['HSHD_SEQNO','BS_YR_MON'])['is_f_20_40'].transform('sum') == 1)\n",
+        "                                   & (df_kcb.groupby(['HSHD_SEQNO','BS_YR_MON'])['is_m_20_40'].transform('sum') == 1))\n",
+        "\n",
+        "df_kcb['n_obs'] = df_kcb.groupby(['HSHD_SEQNO','BS_YR_MON'])['KEY'].transform('count')\n",
+        "df_kcb = df_kcb[(df_kcb['hshd_is_two_parents']== True) & (df_kcb['n_obs']==2)]\n",
+        "\n",
+        "df_kcb['months_from_birth'] = ((df_kcb['BS_YR_MON'].dt.year - df_kcb['BS_YR_MON_birth'].dt.year) * 12 +\n",
+        "                                   (df_kcb['BS_YR_MON'].dt.month - df_kcb['BS_YR_MON_birth'].dt.month))\n",
+        "\n",
+        "df_kcb.sort_values(['HSHD_SEQNO','BS_YR_MON','KEY'], inplace=True)\n",
+        "\n",
+        "df_kcb['months_from_birth'] = ((df_kcb['BS_YR_MON'].dt.year - df_kcb['BS_YR_MON_birth'].dt.year) * 12 +\n",
+        "                                   (df_kcb['BS_YR_MON'].dt.month - df_kcb['BS_YR_MON_birth'].dt.month))"
+      ],
+      "metadata": {
+        "id": "FJDwepw-EACN"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Random Household\n",
+        "directory = os.path.join(path0, 'random_hshd_KCB_all_1.parquet')\n",
+        "ds_random_kcb = pd.read_parquet(directory)\n",
+        "cols = [col for col in ds_random_kcb.columns if col in df_kcb.columns]\n",
+        "ds_random_kcb = ds_random_kcb[cols]\n",
+        "\n",
+        "birth_hshd_list = df_kcb['HSHD_SEQNO'].unique()\n",
+        "ds_random_kcb = ds_random_kcb[~ds_random_kcb['HSHD_SEQNO'].isin(birth_hshd_list)]\n",
+        "ds_random_kcb = uf.clean_data(ds_random_kcb)\n",
+        "ds_random_kcb['is_f_20_40'] = (ds_random_kcb['SEX'] == 'Female') & (ds_random_kcb['AGE'].between(20,40))\n",
+        "ds_random_kcb['is_m_20_40'] = (ds_random_kcb['SEX'] == 'Male') & (ds_random_kcb['AGE'].between(20,40))\n",
+        "\n",
+        "ds_random_kcb['hshd_is_two_parents'] = ((ds_random_kcb.groupby(['HSHD_SEQNO','BS_YR_MON'])['is_f_20_40'].transform('max') == 1) &\n",
+        "                                       (ds_random_kcb.groupby(['HSHD_SEQNO','BS_YR_MON'])['is_m_20_40'].transform('max') == 1))\n",
+        "ds_random_kcb['n_obs'] = ds_random_kcb.groupby(['HSHD_SEQNO','BS_YR_MON'])['KEY'].transform('count')\n",
+        "\n",
+        "ds_random_kcb = ds_random_kcb[(ds_random_kcb['hshd_is_two_person'] == True) &\n",
+        "                              (ds_random_kcb['n_obs'] == 2)]\n",
+        "ds_random_kcb.sort_values(['HSHD_SEQNO','BS_YR_MON','KEY'], inplace = True)\n",
+        "\n",
+        "\n",
+        "ds_random_kcb['months_from_birth'] = -1"
+      ],
+      "metadata": {
+        "id": "XuxI_84fEAEc"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "ds_combined = pd.concat([df_kcb, ds_random_kcb], axis=0, ignore_index=True)\n",
+        "\n",
+        "new_var_name ={\n",
+        "    'CD_USE_AMT':'Card Spending AMT',\n",
+        "    'SIN_CD_USE_AMT':'Credit Card Spending AMT',\n",
+        "    'CHK_CD_USE_AMT': 'Debit Card Spending AMT',\n",
+        "    'CD_FUL_USE_AMT': 'Lump-sum Payment AMT',\n",
+        "    'CD_INSTL_USE_AMT':'Installment Payment AMT',\n",
+        "    'CD_CA_USE_AMT':'Cash Advance AMT',\n",
+        "    'CD_ABRD_USE_AMT':'Overseas Card Spending AMT'\n",
+        "}\n",
+        "\n",
+        "ds_combined.rename(columns = new_var_name, inplace = True)\n",
+        "\n",
+        "\n",
+        "var_interested = ['Card Spending AMT', 'Credit Card Spending AMT','Debit Card Spending AMT',\n",
+        "  'Lump-sum Payment AMT', 'Installment Payment AMT', 'Cash Advance AMT','Overseas Card Spending AMT']\n",
+        "\n",
+        "control_var = ['ICM','TOT_ASST']\n",
+        "\n",
+        "\n",
+        "LAG = 6\n",
+        "LEAD = 6"
+      ],
+      "metadata": {
+        "id": "cKPPKeGuEAG5"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "agg_dict = {col: 'sum' for col in var_interested + control_var}\n",
+        "agg_dict['months_from_birth'] = 'max'\n",
+        "\n",
+        "df_hshd = (\n",
+        "    ds_combined\n",
+        "    .groupby(['HSHD_SEQNO', 'BS_YR_MON'])\n",
+        "    .agg(agg_dict)\n",
+        "    .reset_index()\n",
+        ")\n",
+        "\n",
+        "evt = df_hshd['months_from_birth']\n",
+        "evt_cap = evt.clip(lower=-LAG, upper=LEAD)\n",
+        "\n",
+        "ks = list(range(-LAG,LEAD+1))\n",
+        "ks = [k for k in ks if k != -1]\n",
+        "\n",
+        "for k in ks:\n",
+        "    df_hshd[f\"e_{k}\"] = (evt_cap == k).astype(int)\n",
+        "\n",
+        "df_hshd = df_hshd.set_index(['HSHD_SEQNO','BS_YR_MON']).sort_index()"
+      ],
+      "metadata": {
+        "id": "e1im5QGKEAJI"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "event_cols = [c for c in df_hshd.columns if c.startswith('e_')]\n",
+        "X = df_hshd[event_cols + control_var]\n",
+        "\n",
+        "for var in var_interested:\n",
+        "\n",
+        "    Y = df_hshd[var]\n",
+        "    res = (PanelOLS(\n",
+        "                    Y, X,\n",
+        "                    entity_effects=True,\n",
+        "                    time_effects=True\n",
+        "                    )\n",
+        "        .fit(cov_type='clustered', clusters = pd.Series(df_hshd.index.get_level_values(0), index=df_hshd.index)))\n",
+        "    print(res.summary)\n",
+        "\n",
+        "\n",
+        "    # Plot\n",
+        "\n",
+        "    b = res.params[event_cols]\n",
+        "    se = res.std_errors[event_cols]\n",
+        "    k_vals = [int(c.split('_')[1]) for c in event_cols]\n",
+        "    order = np.argsort(k_vals)\n",
+        "\n",
+        "    k_sorted = np.array(k_vals)[order]\n",
+        "    b_sorted = b.values[order]\n",
+        "    se_sorted = se.values[order]\n",
+        "\n",
+        "    ci_low = b_sorted - 1.96*se_sorted\n",
+        "    ci_high = b_sorted + 1.96*se_sorted\n",
+        "\n",
+        "    plt.figure(figsize=(8,5))\n",
+        "    plt.axhline(0, linestyle='--')\n",
+        "    plt.axvline(-1, linestyle=':')\n",
+        "    plt.plot(k_sorted, b_sorted, marker='o')\n",
+        "    plt.fill_between(k_sorted, ci_low, ci_high, alpha=0.3)\n",
+        "    plt.xlabel('Event time (t − start)')\n",
+        "    plt.ylabel('Effect on y vs. k = −1')\n",
+        "    plt.title(f'{var}')\n",
+        "    plt.tight_layout()\n",
+        "    plt.show()"
+      ],
+      "metadata": {
+        "id": "1ZOe_I-WEALe"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "pH1jda9wEANq"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
