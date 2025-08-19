@@ -1,0 +1,452 @@
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "source": [
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "import psutil\n",
+        "import matplotlib.pyplot as plt\n",
+        "import statsmodels.api as sm\n",
+        "from linearmodels.panel import PanelOLS\n",
+        "from pathlib import Path\n",
+        "import math\n",
+        "import os, sys"
+      ],
+      "metadata": {
+        "id": "LZqjM-PkGPbb"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "path0 = '/mnt/sda1/RA5/data'\n",
+        "path1 = '/mnt/sda1/RA5/intermediate/siyoung/Event_study'"
+      ],
+      "metadata": {
+        "id": "mnbQpXuiGo_3"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "JOVGOe_nGpCV"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# ds_combined is individual-level data\n",
+        "ds_combined = pd.read_parquet(os.path.join(path1,'ds_combined.parquet'))\n",
+        "ds_combined['months_from_birth'] = ds_combined['months_from_birth'].replace(np.nan, -1)"
+      ],
+      "metadata": {
+        "id": "tXmLpc_QGpEy"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# double counting 우려 때문에 배달앱, 특급호텔, 제주 여행 등은 포함하지 않았음\n",
+        "category = ['shc_food_amt', 'shc_ent_amt','shc_dep_amt','shc_mart_amt', 'shc_ssm_amt','shc_clothes_amt',\n",
+        "    'shc_cul_amt','shc_acco_amt','shc_travel_amt','shc_trans_amt','shc_beauty_amt','shc_household_amt',\n",
+        "    'shc_edu_amt','shc_med_amt','shc_furn_amt','shc_car_amt','shc_car_service_amt','shc_oil_amt','shc_e_comm_amt']\n",
+        "\n",
+        "ds_combined['total spending'] = ds_combined[category].sum(axis=1)"
+      ],
+      "metadata": {
+        "id": "Xu_ySIdgGpHS"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "amt_col = [col for col in ds_combined if col.endswith('amt')]\n",
+        "rt_cols = [c.replace('amt', 'rt') for c in amt_col]\n",
+        "ds_combined[rt_cols] = ds_combined[amt_col].div(ds_combined['total spending'], axis=0)\n",
+        "ds_combined.replace([np.inf, -np.inf], np.nan, inplace=True)\n",
+        "\n",
+        "new_var_name = {\n",
+        " 'shc_weekday_rt':'weekday spending ratio',\n",
+        " 'shc_food_rt' : 'food industry ratio',\n",
+        " 'shc_ent_rt' : 'entertainment ratio',\n",
+        " 'shc_dep_rt' : 'dep store ratio',\n",
+        " 'shc_mart_rt' : 'large store ratio',\n",
+        " 'shc_ssm_rt' : 'small retail ratio',\n",
+        " 'shc_clothes_rt' : 'clothing/accessories ratio',\n",
+        " 'shc_cul_rt' : 'sport/culture/leiture ratio',\n",
+        " 'shc_acco_rt' : 'accomodation ratio',\n",
+        " 'shc_travel_rt' : 'travel ratio',\n",
+        " 'shc_trans_rt' : 'transportation ratio',\n",
+        " 'shc_beauty_rt' : 'beauty ratio',\n",
+        " 'shc_household_rt' : 'household living ratio',\n",
+        " 'shc_edu_rt' : 'education ratio',\n",
+        " 'shc_med_rt' : 'medical ratio',\n",
+        " 'shc_furn_rt' : 'electronics/furniture ratio',\n",
+        " 'shc_car_rt' : 'automobile sales ratio',\n",
+        " 'shc_car_service_rt' : 'automobile service ratio',\n",
+        " 'shc_oil_rt': 'fuel ratio',\n",
+        " 'shc_e_comm_rt' : 'e-commerce ratio',\n",
+        " 'shc_dlv_rt' : 'food delivery app ratio',\n",
+        " 'shc_hotel_rt' : 'luxury hotel ratio',\n",
+        " 'shc_jj_rt' : 'Jeju island ratio',\n",
+        " 'shc_travel_os_rt' : 'oversea travel ratio',\n",
+        " 'shc_starbucks_rt' : 'starbucks ratio',\n",
+        " 'shc_e_charge_rt' : 'electronic vehicle charging ratio',\n",
+        " 'shc_tesla_charge_rt' : 'Tesla charging ratio',\n",
+        " 'shc_conv_rt' : 'convenience store ratio'}\n",
+        "\n",
+        "\n",
+        "ds_combined.rename(columns = new_var_name, inplace = True)"
+      ],
+      "metadata": {
+        "id": "UdPLawS2GpJs"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "ds_combined = ds_combined[ds_combined['months_from_birth'].between(-12,12)]"
+      ],
+      "metadata": {
+        "id": "Nwr_paFOGpMB"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "var_interested = ['Card Spending AMT', 'Credit Card Spending AMT','Debit Card Spending AMT',\n",
+        "  'Lump-sum Payment AMT', 'Installment Payment AMT', 'Cash Advance AMT','Overseas Card Spending AMT',\n",
+        "                  'weekday spending ratio','food industry ratio','entertainment ratio','dep store ratio',\n",
+        "                    'large store ratio','small retail ratio','clothing/accessories ratio','sport/culture/leiture ratio',\n",
+        "                    'accomodation ratio','travel ratio','transportation ratio','beauty ratio','household living ratio',\n",
+        "                    'education ratio','medical ratio','electronics/furniture ratio','automobile sales ratio',\n",
+        "                    'automobile service ratio', 'fuel ratio', 'e-commerce ratio', 'food delivery app ratio', 'luxury hotel ratio',\n",
+        "                    'oversea travel ratio',\n",
+        "                  ]\n",
+        "\n",
+        "control_var = ['ICM','TOT_ASST']\n",
+        "\n",
+        "agg_dict = {col: 'sum' for col in var_interested + control_var}\n",
+        "agg_dict['months_from_birth'] = 'max'\n",
+        "agg_dict['birth event'] = 'max'\n",
+        "\n",
+        "\n",
+        "df_hshd = (\n",
+        "    ds_combined\n",
+        "    .groupby(['HSHD_SEQNO', 'BS_YR_MON'])\n",
+        "    .agg(agg_dict)\n",
+        "    .reset_index()\n",
+        ")\n",
+        "\n",
+        "df_hshd.sort_values(['HSHD_SEQNO','BS_YR_MON'],inplace=True)\n",
+        "df_hshd['months_from_birth'] = df_hshd['months_from_birth'].astype(int)"
+      ],
+      "metadata": {
+        "id": "A0JUs9e7GpOn"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_hshd = pd.get_dummies(df_hshd, columns=['months_from_birth'], prefix='e', drop_first = False, dtype=int)\n",
+        "df_hshd = df_hshd.set_index(['HSHD_SEQNO','BS_YR_MON'])\n",
+        "df_hshd.drop(columns=['e_-1'], inplace=True)"
+      ],
+      "metadata": {
+        "id": "w6Lm3lveGpRU"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Aggregate Level"
+      ],
+      "metadata": {
+        "id": "2iAw52_xHGZI"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "event_cols = [c for c in df_hshd.columns if c.startswith('e_')]\n",
+        "X = df_hshd[event_cols + control_var]\n",
+        "output_dir = '/mnt/sda1/RA5/output/siyoung/event_study_birth'"
+      ],
+      "metadata": {
+        "id": "1cz7BUuCGpTn"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "for var in var_interested:\n",
+        "\n",
+        "    y = df_hshd[var]\n",
+        "    model = PanelOLS(y, X, entity_effects=True, time_effects=True)\n",
+        "    res = model.fit(cov_type=\"clustered\", cluster_entity=True)\n",
+        "\n",
+        "\n",
+        "    coefs = res.params[event_cols]\n",
+        "    ses = res.std_errors[event_cols]\n",
+        "\n",
+        "    df_plot = pd.DataFrame({\n",
+        "        'event_time': [int(c.split('_')[-1]) for c in coefs.index],\n",
+        "        'coef': coefs.values,\n",
+        "        'se': ses.values\n",
+        "    })\n",
+        "\n",
+        "    # Insert baseline point\n",
+        "    df_plot = pd.concat([\n",
+        "        df_plot,\n",
+        "        pd.DataFrame({'event_time': [-1], 'coef': [0], 'se': [0]})\n",
+        "    ])\n",
+        "\n",
+        "    df_plot = df_plot.sort_values('event_time')\n",
+        "\n",
+        "    # Plot with baseline included\n",
+        "    plt.errorbar(df_plot['event_time'], df_plot['coef'], yerr=1.96*df_plot['se'], fmt='o-')\n",
+        "    plt.axhline(0, color='gray', linestyle='--')\n",
+        "\n",
+        "    plt.xlabel(\"Months from birth\")\n",
+        "    plt.ylabel(\"Effect on y\")\n",
+        "    plt.title(f'{var}')\n",
+        "    plt.tight_layout()\n",
+        "    if '/' in var:\n",
+        "        var = var.replace('/','_')\n",
+        "    save_path = os.path.join(output_dir, f\"{var}_aggregate.png\")\n",
+        "    plt.savefig(save_path, dpi=300)\n",
+        "\n",
+        "    plt.show()"
+      ],
+      "metadata": {
+        "id": "n0v_qipMGpV4"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [],
+      "metadata": {
+        "id": "TNOpOaF3HYzJ"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [],
+      "metadata": {
+        "id": "RCQHpXNuHY1d"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Heterogeneity"
+      ],
+      "metadata": {
+        "id": "3ec59YDzHVop"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "for var in var_interested:\n",
+        "\n",
+        "    for het in ['ICM quantile', 'TOT_ASST quantile']:\n",
+        "\n",
+        "        quantiles = np.sort(df_hshd[het].dropna().unique())\n",
+        "\n",
+        "        n = len(quantiles)\n",
+        "        ncols = 5\n",
+        "        nrows = int(np.ceil(n / ncols))\n",
+        "\n",
+        "        fig, axes = plt.subplots(nrows, ncols, figsize=(20, 4*nrows), sharey=True)\n",
+        "\n",
+        "        axes = axes.flatten()\n",
+        "\n",
+        "\n",
+        "        for i, q in enumerate(quantiles):\n",
+        "\n",
+        "            df = df_hshd[df_hshd[het] == q]\n",
+        "            X = df.filter(like='e_')\n",
+        "            y = df[var]\n",
+        "            if \"ratio\" not in var.lower():\n",
+        "\n",
+        "                log_value = True\n",
+        "                y = np.log1p(y + 1)\n",
+        "            else:\n",
+        "                log_value = False\n",
+        "\n",
+        "\n",
+        "            model = PanelOLS(y, X, entity_effects=True, time_effects=True)\n",
+        "            res = model.fit(cov_type=\"clustered\", cluster_entity=True)\n",
+        "\n",
+        "            coefs = res.params\n",
+        "            ses = res.std_errors\n",
+        "\n",
+        "            df_plot = pd.DataFrame({\n",
+        "                'event_time': [int(c.split('_')[-1]) for c in coefs.index],\n",
+        "                'coef': coefs.values,\n",
+        "                'se': ses.values\n",
+        "            })\n",
+        "\n",
+        "            # Insert baseline point\n",
+        "            df_plot = pd.concat([\n",
+        "                df_plot,\n",
+        "                pd.DataFrame({'event_time': [-1], 'coef': [0], 'se': [0]})\n",
+        "            ])\n",
+        "\n",
+        "            df_plot = df_plot.sort_values('event_time')\n",
+        "\n",
+        "            ax = axes[i]\n",
+        "            ax.errorbar(df_plot['event_time'], df_plot['coef'],\n",
+        "                        yerr=1.96*df_plot['se'], fmt='o-')\n",
+        "            ax.axhline(0, color='gray', linestyle='--')\n",
+        "            ax.set_title(f\"Q: {int(q)}\")\n",
+        "            ax.set_xlabel(\"Months from birth\")\n",
+        "            if i == 0:\n",
+        "                if log_value:\n",
+        "                    ax.set_ylabel(\"Effect on log y\")\n",
+        "\n",
+        "                else:\n",
+        "                    ax.set_ylabel(\"Effect on y\")\n",
+        "\n",
+        "\n",
+        "\n",
+        "\n",
+        "        for j in range(i+1, len(axes)):\n",
+        "            fig.delaxes(axes[j])\n",
+        "\n",
+        "        fig.suptitle(f\"Event Study for {var} by {het}\", fontsize=16, y=1.02)\n",
+        "        plt.tight_layout()\n",
+        "\n",
+        "        if '/' in var:\n",
+        "            var = var.replace('/','_')\n",
+        "\n",
+        "        save_path = os.path.join(output_dir, f\"{var}_by_{het}.png\")\n",
+        "        plt.savefig(save_path, dpi=300)\n",
+        "\n",
+        "        plt.show()"
+      ],
+      "metadata": {
+        "id": "xDeGKz_FGpYe"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "CCXCG4mXGpbC"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "-rlZpqeJGpdq"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "4bYwuVogGpf1"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "pgmIPHoUGpid"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "VuYMOhY3Gpk_"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "N19sAvEBGPdo"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "GThINQXRGPfw"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "PAUlBblRGPiB"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "X5NfenjuGPj2"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "provenance": []
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
